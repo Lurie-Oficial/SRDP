@@ -1,0 +1,36 @@
+# Directorios de compilación
+/build/
+/out/
+/crear/
+*.exe
+*.out
+*.o
+*.obj
+
+# Archivos de IDE
+.vs/
+.vscode/
+*.user
+*.suo
+CMakeSettings.json
+CppProperties.json  # Este está en tu proyecto, no subirlo
+
+# Archivos generados
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.log
+compile_commands.json
+
+# Archivos de usuarios (NO SUBIR CONTRASEÑAS)
+Programa/Usuarios/
+*.rg
+Usuario_por_defecto.txt
+SRDP_llaves.key
+
+# Archivos temporales
+*.tmp
+*.bak
+*.swp
+*~
