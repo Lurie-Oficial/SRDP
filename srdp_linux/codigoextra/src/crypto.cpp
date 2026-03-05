@@ -1,4 +1,4 @@
-﻿#include "crypto.h"
+#include "crypto.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <cstdint>
 
 // Incluir headers de OpenSSL (más seguro)
 #include <openssl/evp.h>
@@ -18,6 +19,39 @@
 #include <openssl/hmac.h>
 #include <openssl/buffer.h>
 
+// Helpers internos para borrado seguro de memoria
+namespace {
+    inline void secureZero(void* data, size_t size) {
+        if (!data || size == 0) return;
+        volatile unsigned char* p = static_cast<volatile unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            p[i] = 0;
+        }
+    }
+
+    inline void secureClearString(std::string& s) {
+        if (!s.empty()) {
+            secureZero(&s[0], s.size());
+            s.clear();
+            s.shrink_to_fit();
+        }
+    }
+
+    inline void writeUint32BE(uint32_t value, std::vector<unsigned char>& out) {
+        out.push_back(static_cast<unsigned char>((value >> 24) & 0xFF));
+        out.push_back(static_cast<unsigned char>((value >> 16) & 0xFF));
+        out.push_back(static_cast<unsigned char>((value >> 8) & 0xFF));
+        out.push_back(static_cast<unsigned char>(value & 0xFF));
+    }
+
+    inline uint32_t readUint32BE(const unsigned char* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) |
+               (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8)  |
+               (static_cast<uint32_t>(p[3]));
+    }
+}
+
 namespace SRDP {
 
     // ============================================
@@ -25,7 +59,8 @@ namespace SRDP {
     // ============================================
     const int AES_256_KEY_SIZE = 32;     // 256 bits
     const int AES_BLOCK_SIZE = 16;       // 128 bits
-    const int IV_SIZE = 16;               // Vector de inicialización
+    const int IV_SIZE = 16;              // Vector de inicialización
+    const int SALT_SIZE = 16;            // Tamaño del salt PBKDF2
     const int PBKDF2_ITERATIONS = 100000; // Iteraciones para derivación de clave
     const int TAG_SIZE = 16;              // Tamaño del tag de autenticación (GCM)
 
@@ -62,18 +97,21 @@ namespace SRDP {
             // 1. Convertir texto a bytes
             auto bytesPlano = stringABytes(textoPlano);
 
-            // 2. Generar IV aleatorio
+            // 2. Generar salt e IV aleatorios
+            auto salt = generarIV(SALT_SIZE);
             auto iv = generarIV(IV_SIZE);
 
             // 3. Derivar clave real usando PBKDF2
             std::vector<unsigned char> keyDerivada(AES_256_KEY_SIZE);
-            PKCS5_PBKDF2_HMAC(
-                reinterpret_cast<const char*>(clave.data()), clave.size(),
-                iv.data(), iv.size(),
-                PBKDF2_ITERATIONS,
-                EVP_sha256(),
-                keyDerivada.size(), keyDerivada.data()
-            );
+            if (PKCS5_PBKDF2_HMAC(
+                    reinterpret_cast<const char*>(clave.data()), static_cast<int>(clave.size()),
+                    salt.data(), static_cast<int>(salt.size()),
+                    PBKDF2_ITERATIONS,
+                    EVP_sha256(),
+                    static_cast<int>(keyDerivada.size()), keyDerivada.data()
+                ) != 1) {
+                throw std::runtime_error("Fallo en derivación de clave (PBKDF2)");
+            }
 
             // 4. Configurar cifrado AES-256-GCM
             EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -120,9 +158,27 @@ namespace SRDP {
 
             EVP_CIPHER_CTX_free(ctx);
 
-            // 8. Empaquetar: [IV (16) + TAG (16) + DATOS_CIFRADOS]
+            // 8. Empaquetar formato v2:
+            //    "SRDP" (4 bytes)
+            //    versión (1 byte) = 2
+            //    iteraciones PBKDF2 (4 bytes, big endian)
+            //    saltLen (1 byte), ivLen (1 byte), tagLen (1 byte)
+            //    SALT || IV || TAG || DATOS_CIFRADOS
             std::vector<unsigned char> resultado;
-            resultado.reserve(iv.size() + tag.size() + ciphertextLen);
+            const unsigned char magic[4] = { 'S', 'R', 'D', 'P' };
+            const unsigned char version = 2;
+            resultado.reserve(4 + 1 + 4 + 3 + salt.size() + iv.size() + tag.size() + ciphertextLen);
+
+            // Cabecera
+            resultado.insert(resultado.end(), magic, magic + 4);
+            resultado.push_back(version);
+            writeUint32BE(static_cast<uint32_t>(PBKDF2_ITERATIONS), resultado);
+            resultado.push_back(static_cast<unsigned char>(salt.size()));
+            resultado.push_back(static_cast<unsigned char>(iv.size()));
+            resultado.push_back(static_cast<unsigned char>(tag.size()));
+
+            // Datos
+            resultado.insert(resultado.end(), salt.begin(), salt.end());
             resultado.insert(resultado.end(), iv.begin(), iv.end());
             resultado.insert(resultado.end(), tag.begin(), tag.end());
             resultado.insert(resultado.end(),
@@ -131,14 +187,15 @@ namespace SRDP {
 
             // 9. Limpiar memoria sensible
             limpiarMemoria(bytesPlano);
+            limpiarMemoria(salt);
             limpiarMemoria(keyDerivada);
 
             // 10. Convertir a string para retornar
             std::string resultadoStr = bytesAString(resultado);
-
-            // Codificar a Base64 para texto plano (opcional, pero más seguro)
-            // Esto evita problemas con caracteres no imprimibles
-            return CryptoUtil::codificarBase64(resultadoStr);
+            // Codificar a Base64 para texto plano (evita caracteres no imprimibles)
+            std::string resultadoBase64 = CryptoUtil::codificarBase64(resultadoStr);
+            secureClearString(resultadoStr);
+            return resultadoBase64;
 
         }
         catch (const std::exception& e) {
@@ -166,36 +223,101 @@ namespace SRDP {
             // 2. Convertir a bytes
             auto bytesCifrados = stringABytes(datosCifrados);
 
-            // Verificar tamaño mínimo (IV + TAG)
-            if (bytesCifrados.size() < IV_SIZE + TAG_SIZE) {
-                throw std::runtime_error("Datos cifrados corruptos (muy pequeños)");
+            // 3. Detectar formato y extraer salt, IV, TAG y datos
+            std::vector<unsigned char> salt;
+            std::vector<unsigned char> iv;
+            std::vector<unsigned char> tag;
+            std::vector<unsigned char> datosReales;
+            int iteracionesPBKDF2 = PBKDF2_ITERATIONS;
+
+            // Formato nuevo v2 con cabecera "SRDP"
+            if (bytesCifrados.size() >= 12 &&
+                bytesCifrados[0] == 'S' &&
+                bytesCifrados[1] == 'R' &&
+                bytesCifrados[2] == 'D' &&
+                bytesCifrados[3] == 'P' &&
+                bytesCifrados[4] == 2) {
+
+                const unsigned char* base = reinterpret_cast<const unsigned char*>(bytesCifrados.data());
+                uint32_t iters = readUint32BE(base + 5);
+                if (iters == 0 || iters > 100000000U) {
+                    throw std::runtime_error("Iteraciones PBKDF2 inválidas en cabecera");
+                }
+                iteracionesPBKDF2 = static_cast<int>(iters);
+
+                unsigned char saltLen = base[9];
+                unsigned char ivLen = base[10];
+                unsigned char tagLen = base[11];
+
+                size_t offset = 12;
+                size_t totalNecesario = offset +
+                    static_cast<size_t>(saltLen) +
+                    static_cast<size_t>(ivLen) +
+                    static_cast<size_t>(tagLen);
+
+                if (bytesCifrados.size() < totalNecesario) {
+                    throw std::runtime_error("Datos cifrados corruptos (cabecera truncada)");
+                }
+
+                salt.assign(
+                    bytesCifrados.begin() + offset,
+                    bytesCifrados.begin() + offset + saltLen
+                );
+                offset += saltLen;
+
+                iv.assign(
+                    bytesCifrados.begin() + offset,
+                    bytesCifrados.begin() + offset + ivLen
+                );
+                offset += ivLen;
+
+                tag.assign(
+                    bytesCifrados.begin() + offset,
+                    bytesCifrados.begin() + offset + tagLen
+                );
+                offset += tagLen;
+
+                datosReales.assign(
+                    bytesCifrados.begin() + offset,
+                    bytesCifrados.end()
+                );
             }
+            else {
+                // Formato antiguo: [IV (16) + TAG (16) + DATOS_CIFRADOS]
+                if (bytesCifrados.size() < IV_SIZE + TAG_SIZE) {
+                    throw std::runtime_error("Datos cifrados corruptos (muy pequeños)");
+                }
 
-            // 3. Extraer IV, TAG y datos
-            std::vector<unsigned char> iv(
-                bytesCifrados.begin(),
-                bytesCifrados.begin() + IV_SIZE
-            );
+                iv.assign(
+                    bytesCifrados.begin(),
+                    bytesCifrados.begin() + IV_SIZE
+                );
 
-            std::vector<unsigned char> tag(
-                bytesCifrados.begin() + IV_SIZE,
-                bytesCifrados.begin() + IV_SIZE + TAG_SIZE
-            );
+                tag.assign(
+                    bytesCifrados.begin() + IV_SIZE,
+                    bytesCifrados.begin() + IV_SIZE + TAG_SIZE
+                );
 
-            std::vector<unsigned char> datosReales(
-                bytesCifrados.begin() + IV_SIZE + TAG_SIZE,
-                bytesCifrados.end()
-            );
+                datosReales.assign(
+                    bytesCifrados.begin() + IV_SIZE + TAG_SIZE,
+                    bytesCifrados.end()
+                );
+
+                // En el formato antiguo se usaba el IV como salt
+                salt = iv;
+            }
 
             // 4. Derivar clave usando PBKDF2 (mismo proceso que cifrado)
             std::vector<unsigned char> keyDerivada(AES_256_KEY_SIZE);
-            PKCS5_PBKDF2_HMAC(
-                reinterpret_cast<const char*>(clave.data()), clave.size(),
-                iv.data(), iv.size(),
-                PBKDF2_ITERATIONS,
-                EVP_sha256(),
-                keyDerivada.size(), keyDerivada.data()
-            );
+            if (PKCS5_PBKDF2_HMAC(
+                    reinterpret_cast<const char*>(clave.data()), static_cast<int>(clave.size()),
+                    salt.data(), static_cast<int>(salt.size()),
+                    iteracionesPBKDF2,
+                    EVP_sha256(),
+                    static_cast<int>(keyDerivada.size()), keyDerivada.data()
+                ) != 1) {
+                throw std::runtime_error("Fallo en derivación de clave (PBKDF2)");
+            }
 
             // 5. Configurar descifrado AES-256-GCM
             EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -251,6 +373,7 @@ namespace SRDP {
 
             // 10. Limpiar memoria
             limpiarMemoria(keyDerivada);
+            limpiarMemoria(salt);
 
             return resultado;
 
@@ -289,6 +412,7 @@ namespace SRDP {
             // 2. Convertir a string y cifrar
             std::string textoPlano(buffer.begin(), buffer.end());
             std::string textoCifrado = cifrarTexto(textoPlano);
+            secureClearString(textoPlano);
 
             // 3. Guardar archivo cifrado
             std::ofstream archivoSalida(rutaSalida, std::ios::binary);
@@ -352,6 +476,7 @@ namespace SRDP {
 
             archivoSalida.write(textoDescifrado.c_str(), textoDescifrado.size());
             archivoSalida.close();
+            secureClearString(textoDescifrado);
 
             std::cout << "[CRYPTO] Archivo descifrado guardado: " << rutaSalida << std::endl;
             return true;
@@ -377,12 +502,15 @@ namespace SRDP {
         // para que la clave original no quede en memoria
         unsigned char hash[SHA256_DIGEST_LENGTH];
         SHA256_CTX sha256;
-        SHA256_Init(&sha256);
-        SHA256_Update(&sha256, nuevaClave.c_str(), nuevaClave.size());
-        SHA256_Final(hash, &sha256);
+        if (SHA256_Init(&sha256) != 1 ||
+            SHA256_Update(&sha256, nuevaClave.c_str(), nuevaClave.size()) != 1 ||
+            SHA256_Final(hash, &sha256) != 1) {
+            throw std::runtime_error("Error calculando hash de la clave");
+        }
 
         // Guardar el hash como "clave" base
         clave.assign(hash, hash + SHA256_DIGEST_LENGTH);
+        secureZero(hash, sizeof(hash));
 
         std::cout << " [OK]" << std::endl;
     }
@@ -440,11 +568,7 @@ namespace SRDP {
 
     void CryptoMotor::limpiarMemoria(std::vector<unsigned char>& datos) {
         if (!datos.empty()) {
-            // Sobrescribir con ceros de manera segura (evita optimizaciones)
-            volatile unsigned char* ptr = datos.data();
-            for (size_t i = 0; i < datos.size(); ++i) {
-                ptr[i] = 0;
-            }
+            secureZero(datos.data(), datos.size());
             datos.clear();
             datos.shrink_to_fit();
         }
@@ -495,9 +619,11 @@ namespace SRDP {
         unsigned char hash[SHA256_DIGEST_LENGTH];
 
         SHA256_CTX sha256;
-        SHA256_Init(&sha256);
-        SHA256_Update(&sha256, datos.c_str(), datos.size());
-        SHA256_Final(hash, &sha256);
+        if (SHA256_Init(&sha256) != 1 ||
+            SHA256_Update(&sha256, datos.c_str(), datos.size()) != 1 ||
+            SHA256_Final(hash, &sha256) != 1) {
+            throw std::runtime_error("Error calculando hash SHA-256");
+        }
 
         // Convertir a hexadecimal
         std::stringstream ss;
@@ -505,6 +631,7 @@ namespace SRDP {
             ss << std::hex << std::setw(2) << std::setfill('0')
                 << static_cast<int>(hash[i]);
         }
+        secureZero(hash, sizeof(hash));
 
         return ss.str();
     }
