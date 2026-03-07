@@ -1,7 +1,8 @@
 # Directorios de compilación
 /build/
 /out/
-/crear/
+/srdp_linu
+x/crear/
 *.exe
 *.out
 *.o
