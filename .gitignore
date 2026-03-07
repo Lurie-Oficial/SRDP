@@ -1,7 +1,6 @@
 # Directorios de compilación
 /build/
 /out/
-/srdp_linux/crear/
 *.exe
 *.out
 *.o
@@ -23,11 +22,6 @@ Makefile
 *.log
 compile_commands.json
 
-# Archivos de usuarios (NO SUBIR CONTRASEÑAS)
-Programa/Usuarios/
-*.rg
-Usuario_por_defecto.txt
-SRDP_llaves.key
 
 # Archivos temporales
 *.tmp
