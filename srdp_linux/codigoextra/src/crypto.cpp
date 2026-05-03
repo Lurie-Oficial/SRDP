@@ -166,12 +166,12 @@ namespace SRDP {
             //    SALT || IV || TAG || DATOS_CIFRADOS
             std::vector<unsigned char> resultado;
             const unsigned char magic[4] = { 'S', 'R', 'D', 'P' };
-            const unsigned char version = 2;
+            const unsigned char formatoVersion = 2;
             resultado.reserve(4 + 1 + 4 + 3 + salt.size() + iv.size() + tag.size() + ciphertextLen);
 
             // Cabecera
             resultado.insert(resultado.end(), magic, magic + 4);
-            resultado.push_back(version);
+            resultado.push_back(formatoVersion);
             writeUint32BE(static_cast<uint32_t>(PBKDF2_ITERATIONS), resultado);
             resultado.push_back(static_cast<unsigned char>(salt.size()));
             resultado.push_back(static_cast<unsigned char>(iv.size()));

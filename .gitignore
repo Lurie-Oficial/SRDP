@@ -11,7 +11,7 @@
 .vscode/
 *.user
 *.suo
-CMakeSettings.json
+CMakePresets.json
 CppProperties.json  # Este está en tu proyecto, no subirlo
 
 # Archivos generados

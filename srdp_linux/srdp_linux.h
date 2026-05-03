@@ -8,4 +8,7 @@
 #include <string>
 #include <fstream>
 #include <filesystem>
+#include <ftxui/component/component.hpp>
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/screen.hpp>
 // TODO: Haga referencia aquí a los encabezados adicionales que el programa requiere.

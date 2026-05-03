@@ -4,6 +4,7 @@
 #include "srdp_linux.h"
 #include "login.h"
 #include "formato_dp.h"
+using namespace ftxui;
 using std::cout;
 using std::cin;
 using std::endl;
@@ -84,7 +85,11 @@ int main() {
         texto = "Bienvenido a SRDP para Linux, potenciado con C++\n";
     }
 
-    cout << texto << endl;
+    auto texto_estilizado = text(texto) | bold | color(Color::Cyan);
+    auto pantalla = ftxui::Screen::Create(
+        ftxui::Dimension::Full(), ftxui::Dimension::Fit(texto_estilizado));
+    ftxui::Render(pantalla, texto_estilizado);
+    pantalla.Print();
     logear art;
     while (op)
     {

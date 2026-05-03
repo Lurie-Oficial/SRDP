@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.15)
+
+# Asegura control explícito del runtime MSVC (/MD, /MDd) vía CMake
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(srdp_linux LANGUAGES CXX)
 
 # Estándar C++
@@ -54,7 +60,11 @@ endif()
 
 set(_SRDP_FTXUI_NEEDS_FETCH OFF)
 
-if(UNIX AND NOT APPLE)
+if(WIN32)
+    # En Windows (vcpkg), forzamos paquete CONFIG para usar
+    # librerías Debug/Release correctas y evitar mezcla de runtimes.
+    find_package(ftxui CONFIG REQUIRED)
+elseif(UNIX AND NOT APPLE)
     # Evita que en WSL se resuelva FTXUI desde el vcpkg de Windows (x64-windows),
     # que inyecta flags MSVC como "/utf-8" y rompe el build con GCC/Clang.
     if(EXISTS "/mnt/c/vcpkg/installed/x64-windows")
@@ -154,6 +164,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # Opciones de compilación
 if(MSVC)
+    # Evita mezcla Debug/Release en CRT (LNK2038 RuntimeLibrary/_ITERATOR_DEBUG_LEVEL)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     target_compile_options(${PROJECT_NAME} PRIVATE /W4 /EHsc /utf-8)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)

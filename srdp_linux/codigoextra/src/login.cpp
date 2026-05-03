@@ -12,8 +12,8 @@ using json = nlohmann::json;
 int logear::preparar_login() {
     fs::path ruac = fs::current_path();
     string cave = SRDP::CryptoUtil::generarClaveAleatoria(32);
-    SRDP::CryptoMotor crypto("CNFigualaMicompañia");
-    string nesesario = "Usuario: user\nContraseña: " + cave;
+    SRDP::CryptoMotor crypto("CNFigualaMicompania");
+    string nesesario = "Usuario: user\nContrasena: " + cave;
     ofstream mi_archi("Programa/Usuarios/user.txt");
     mi_archi << nesesario;
     mi_archi.close();
@@ -130,7 +130,7 @@ bool logear::login() {
         string cuatro = "Programa/Usuarios/" + uno + ".txt";
         if (fs::exists(tres)) {
 
-            SRDP::CryptoMotor micodi("CNFigualaMicompañia");
+            SRDP::CryptoMotor micodi("CNFigualaMicompania");
             micodi.descifrarArchivo(tres,cuatro);
             ifstream mi_codigo(cuatro);
             string salida;
@@ -153,7 +153,7 @@ bool logear::login() {
 
                     }
                 }
-                string seis; cout << "Coloque la clave: "; cin >> seis; string siete = "Contraseña: " + seis; if (siete == salida) {
+                string seis; cout << "Coloque la clave: "; cin >> seis; string siete = "Contrasena: " + seis; if (siete == salida) {
                     cout << "Clave correcta" << endl;
                     correcto = true;
                 }
